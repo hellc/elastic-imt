@@ -2,6 +2,7 @@ import asyncio
 import json
 import os
 import warnings
+import zipfile
 from typing import Any, Dict, List
 
 import elasticsearch
@@ -115,13 +116,25 @@ async def dump_index_to_jsonl(task: Dict[str, Any]) -> None:
         dump_chunk: List[dict] = []
 
         def save_dump_chunk() -> None:
-            current_file_path = os.path.join(
-                dst_dir, f"{task['src_index']}-{current_file_num}.jsonl"
-            )
+            file_name = f"{task['src_index']}-{current_file_num}"
+
+            current_file_path = os.path.join(dst_dir, f"{file_name}.jsonl")
+
             with open(current_file_path, "w") as f:
                 lines = [json.dumps(doc) + "\n" for doc in dump_chunk]
                 f.writelines(lines)
                 dump_chunk.clear()
+
+            compress_file = task.get("compress_file", False)
+            if compress_file:
+                current_file_path_zip = current_file_path.replace(".jsonl", ".zip")
+                with zipfile.ZipFile(
+                    current_file_path_zip,
+                    "w",
+                    compression=zipfile.ZIP_DEFLATED,
+                ) as f:
+                    f.write(current_file_path, arcname=current_file_path)
+                os.remove(current_file_path)
 
         if not os.path.exists(dst_dir):
             os.makedirs(dst_dir)
@@ -220,6 +233,7 @@ async def main() -> None:
             max_docs_per_file = st.number_input(
                 "Max docs per dump file", min_value=1, value=100
             )
+            compress_file = st.checkbox("Compress dumped files")
             progress_bar = st.progress(0, text=src_index)
             progress_bar.empty()
             submit_button = st.form_submit_button("Dump index")
@@ -237,6 +251,7 @@ async def main() -> None:
                     "docs_per_request": docs_per_request,
                     "dst_dir": dst_dir,
                     "max_docs_per_file": max_docs_per_file,
+                    "compress_file": compress_file,
                     "progress_bar": progress_bar,
                     "is_completed": False,
                 }
