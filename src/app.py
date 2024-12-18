@@ -14,122 +14,133 @@ warnings.simplefilter("ignore", category=ElasticsearchWarning)
 
 # Async migration function
 async def migrate_index(task):
-    src_es = elasticsearch.AsyncElasticsearch(
-        hosts=task["src_es_hosts"].split(","),
-        headers={"Content-Type": "application/json"},
-    )
-    dst_es = elasticsearch.AsyncElasticsearch(
-        hosts=task["dst_es_hosts"].split(","),
-        headers={"Content-Type": "application/json"},
-    )
-    docs_per_request = task["docs_per_request"]
-
-    # Get source index settings and mapping
-    src_index_settings = await src_es.indices.get_settings(index=task["src_index"])
-    src_index_mapping = await src_es.indices.get_mapping(index=task["src_index"])
-
-    src_index_settings[task["src_index"]]["settings"]["index"].pop("creation_date")
-    src_index_settings[task["src_index"]]["settings"]["index"].pop("provided_name")
-    src_index_settings[task["src_index"]]["settings"]["index"].pop("uuid")
-    src_index_settings[task["src_index"]]["settings"]["index"].pop("version")
-
-    # Create destination index with settings and mapping
-    if not await dst_es.indices.exists(index=task["dst_index"]):
-        await dst_es.indices.create(
-            index=task["dst_index"],
-            body={
-                "settings": src_index_settings[task["src_index"]]["settings"],
-                "mappings": src_index_mapping[task["src_index"]]["mappings"],
-            },
+    try:
+        src_es = elasticsearch.AsyncElasticsearch(
+            hosts=task["src_es_hosts"].split(","),
+            headers={"Content-Type": "application/json"},
+        )
+        dst_es = elasticsearch.AsyncElasticsearch(
+            hosts=task["dst_es_hosts"].split(","),
+            headers={"Content-Type": "application/json"},
         )
 
-    # Get document count
-    src_index_count = await src_es.count(index=task["src_index"], body=task["query"])
-    total_docs = src_index_count["count"]
+        docs_per_request = task["docs_per_request"]
 
-    current_doc_enum = 0
+        # Get source index settings and mapping
+        src_index_settings = await src_es.indices.get_settings(index=task["src_index"])
+        src_index_mapping = await src_es.indices.get_mapping(index=task["src_index"])
 
-    async_scan_iterator = helpers.async_scan(
-        src_es, index=task["src_index"], query=task["query"], size=docs_per_request
-    )
-    tqdm_bar = atqdm.tqdm(async_scan_iterator, total=total_docs)
-    async for doc in tqdm_bar:
-        current_doc_enum += 1
-        await dst_es.index(
-            index=task["dst_index"], body=doc["_source"], id=doc.get("_id", None)
+        for key in ["creation_date", "provided_name", "uuid", "version"]:
+            src_index_settings[task["src_index"]]["settings"]["index"].pop(key, None)
+
+        # Create destination index with settings and mapping
+        if not await dst_es.indices.exists(index=task["dst_index"]):
+            await dst_es.indices.create(
+                index=task["dst_index"],
+                body={
+                    "settings": src_index_settings[task["src_index"]]["settings"],
+                    "mappings": src_index_mapping[task["src_index"]]["mappings"],
+                },
+            )
+
+        # Get document count
+        src_index_count = await src_es.count(
+            index=task["src_index"], body=task["query"]
         )
-        task["progress_bar"].progress(
-            current_doc_enum / total_docs, text=f"{current_doc_enum}/{total_docs}"
-        )
-        tqdm_bar.desc = "Migrating: " + task["src_index"] + "to: " + task["dst_index"]
+        total_docs = src_index_count["count"]
 
-    task["is_completed"] = True
-    await src_es.close()
-    await dst_es.close()
+        current_doc_enum = 0
+
+        async_scan_iterator = helpers.async_scan(
+            src_es, index=task["src_index"], query=task["query"], size=docs_per_request
+        )
+        tqdm_bar = atqdm.tqdm(async_scan_iterator, total=total_docs)
+        async for doc in tqdm_bar:
+            current_doc_enum += 1
+            await dst_es.index(
+                index=task["dst_index"], body=doc["_source"], id=doc.get("_id", None)
+            )
+            task["progress_bar"].progress(
+                current_doc_enum / total_docs, text=f"{current_doc_enum}/{total_docs}"
+            )
+            tqdm_bar.desc = f"Migrating: {task['src_index']} to: {task['dst_index']}"
+
+        task["is_completed"] = True
+    except Exception as e:
+        task["error"] = str(e)
+    finally:
+        await src_es.close()
+        await dst_es.close()
 
 
 async def dump_index_to_jsonl(task):
-    src_es = elasticsearch.AsyncElasticsearch(
-        hosts=task["src_es_hosts"].split(","),
-        headers={"Content-Type": "application/json"},
-    )
+    try:
+        src_es = elasticsearch.AsyncElasticsearch(
+            hosts=task["src_es_hosts"].split(","),
+            headers={"Content-Type": "application/json"},
+        )
 
-    docs_per_request = task["docs_per_request"]
-    max_docs_per_file = task["max_docs_per_file"]
-    dst_dir = task["dst_dir"]
+        docs_per_request = task["docs_per_request"]
+        max_docs_per_file = task["max_docs_per_file"]
+        dst_dir = task["dst_dir"]
 
-    # Get document count
-    src_index_count = await src_es.count(index=task["src_index"], body=task["query"])
-    total_docs = src_index_count["count"]
+        # Get document count
+        src_index_count = await src_es.count(
+            index=task["src_index"], body=task["query"]
+        )
+        total_docs = src_index_count["count"]
 
-    current_doc_enum = 0
-    current_file_num = 0
+        current_doc_enum = 0
+        current_file_num = 0
 
-    async_scan_iterator = helpers.async_scan(
-        src_es, index=task["src_index"], query=task["query"], size=docs_per_request
-    )
+        async_scan_iterator = helpers.async_scan(
+            src_es, index=task["src_index"], query=task["query"], size=docs_per_request
+        )
 
-    dump_chunk: List[dict] = []
+        dump_chunk: List[dict] = []
 
-    def save_dump_chunk():
-        current_file_path = f"{dst_dir}/{task['src_index']}-{current_file_num}.jsonl"
-        with open(current_file_path, "w") as f:
-            lines = [json.dumps(doc) + "\n" for doc in dump_chunk]
-            f.writelines(lines)
-            dump_chunk.clear()
-            f.close()
+        def save_dump_chunk():
+            current_file_path = os.path.join(
+                dst_dir, f"{task['src_index']}-{current_file_num}.jsonl"
+            )
+            with open(current_file_path, "w") as f:
+                lines = [json.dumps(doc) + "\n" for doc in dump_chunk]
+                f.writelines(lines)
+                dump_chunk.clear()
 
-    if not os.path.exists(dst_dir):
-        os.makedirs(dst_dir)
+        if not os.path.exists(dst_dir):
+            os.makedirs(dst_dir)
 
-    tqdm_bar = atqdm.tqdm(async_scan_iterator, total=total_docs)
-    async for doc in tqdm_bar:
-        tqdm_bar.desc = "Dumping: " + task["src_index"]
-        current_doc_enum += 1
-        dump_chunk.append({"_id": doc["_id"], "_source": doc["_source"]})
-        if current_doc_enum % max_docs_per_file == 0:
+        tqdm_bar = atqdm.tqdm(async_scan_iterator, total=total_docs)
+        async for doc in tqdm_bar:
+            tqdm_bar.desc = f"Dumping: {task['src_index']}"
+            current_doc_enum += 1
+            dump_chunk.append({"_id": doc["_id"], "_source": doc["_source"]})
+            if current_doc_enum % max_docs_per_file == 0:
+                current_file_num += 1
+                save_dump_chunk()
+
+            task["progress_bar"].progress(
+                current_doc_enum / total_docs, text=f"{current_doc_enum}/{total_docs}"
+            )
+
+        if dump_chunk:
             current_file_num += 1
             save_dump_chunk()
 
-        task["progress_bar"].progress(
-            current_doc_enum / total_docs, text=f"{current_doc_enum}/{total_docs}"
-        )
-
-    if dump_chunk:
-        save_dump_chunk()
-
-    task["is_completed"] = True
-    await src_es.close()
+        task["is_completed"] = True
+    except Exception as e:
+        task["error"] = str(e)
+    finally:
+        await src_es.close()
 
 
 async def main():
-    # Elasticsearch settings
     st.header("Elasticsearch Settings")
     src_es_hosts = st.text_input(
         "Source Elasticsearch Hosts (comma-separated)", value="http://localhost:9200"
     )
 
-    # Migration tasks
     st.header("Migration Tasks")
     tasks = []
     query_input = st.text_area(
@@ -138,7 +149,6 @@ async def main():
         height=150,
     )
 
-    # Add task form
     mode_tabs = st.tabs(["Elastic to Elastic", "Elastic to JSONL"])
     with mode_tabs[0]:
         with st.form("add_migration_task"):
@@ -158,7 +168,8 @@ async def main():
                 try:
                     query = json.loads(query_input)
                 except json.JSONDecodeError as e:
-                    assert e
+                    st.error(f"Invalid JSON query: {e}")
+                    return
 
                 task = {
                     "src_es_hosts": src_es_hosts,
@@ -172,6 +183,9 @@ async def main():
                 }
                 tasks.append(task)
                 await migrate_index(task)
+                if "error" in task:
+                    st.error(f"Migration error: {task['error']}")
+
     with mode_tabs[1]:
         with st.form("add_dump_task"):
             src_index = st.text_input("Source Index")
@@ -192,7 +206,9 @@ async def main():
                 try:
                     query = json.loads(query_input)
                 except json.JSONDecodeError as e:
-                    assert e
+                    st.error(f"Invalid JSON query: {e}")
+                    return
+
                 task = {
                     "src_es_hosts": src_es_hosts,
                     "query": query,
@@ -205,6 +221,8 @@ async def main():
                 }
                 tasks.append(task)
                 await dump_index_to_jsonl(task)
+                if "error" in task:
+                    st.error(f"Dumping error: {task['error']}")
 
 
 if __name__ == "__main__":
