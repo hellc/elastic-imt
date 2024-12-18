@@ -1,4 +1,5 @@
 import asyncio
+import json
 import warnings
 
 import elasticsearch
@@ -20,10 +21,21 @@ dst_es_hosts = st.sidebar.text_input(
 # Migration tasks
 st.header("Migration Tasks")
 tasks = []
+query_input = st.text_area(
+    "Elastic custom query:",
+    value='{\n    "query": {\n        "match_all": {}\n    }\n}',
+    height=150,
+)
+# query = st.text_input("Elastic custom query:", value={"query": {"match_all": {}}})
 
 
 # Async migration function
 async def migrate_index(task):
+    try:
+        query = json.loads(query_input)
+    except json.JSONDecodeError as e:
+        assert e
+
     src_es = elasticsearch.AsyncElasticsearch(
         hosts=src_es_hosts.split(","), headers={"Content-Type": "application/json"}
     )
@@ -51,7 +63,6 @@ async def migrate_index(task):
         )
 
     # Get document count
-    query = {"query": {"match_all": {}}}  # TODO dates filter
     src_index_count = await src_es.count(index=task["src_index"], body=query)
     total_docs = src_index_count["count"]
 
