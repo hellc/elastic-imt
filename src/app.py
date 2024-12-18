@@ -2,7 +2,7 @@ import asyncio
 import json
 import os
 import warnings
-from typing import List
+from typing import Any, Dict, List
 
 import elasticsearch
 import streamlit as st
@@ -12,8 +12,17 @@ from elasticsearch import ElasticsearchWarning, helpers
 warnings.simplefilter("ignore", category=ElasticsearchWarning)
 
 
-# Async migration function
-async def migrate_index(task):
+async def migrate_index(task: Dict[str, Any]) -> None:
+    """
+    Migrate documents from a source Elasticsearch index to a destination index.
+
+    Args:
+        task (Dict[str, Any]): Task parameters including source and destination Elasticsearch configurations,
+                               indices, query, and other settings.
+
+    Returns:
+        None
+    """
     try:
         src_es = elasticsearch.AsyncElasticsearch(
             hosts=task["src_es_hosts"].split(","),
@@ -26,14 +35,12 @@ async def migrate_index(task):
 
         docs_per_request = task["docs_per_request"]
 
-        # Get source index settings and mapping
         src_index_settings = await src_es.indices.get_settings(index=task["src_index"])
         src_index_mapping = await src_es.indices.get_mapping(index=task["src_index"])
 
         for key in ["creation_date", "provided_name", "uuid", "version"]:
             src_index_settings[task["src_index"]]["settings"]["index"].pop(key, None)
 
-        # Create destination index with settings and mapping
         if not await dst_es.indices.exists(index=task["dst_index"]):
             await dst_es.indices.create(
                 index=task["dst_index"],
@@ -43,7 +50,6 @@ async def migrate_index(task):
                 },
             )
 
-        # Get document count
         src_index_count = await src_es.count(
             index=task["src_index"], body=task["query"]
         )
@@ -73,7 +79,17 @@ async def migrate_index(task):
         await dst_es.close()
 
 
-async def dump_index_to_jsonl(task):
+async def dump_index_to_jsonl(task: Dict[str, Any]) -> None:
+    """
+    Dump documents from a source Elasticsearch index to JSONL files.
+
+    Args:
+        task (Dict[str, Any]): Task parameters including source Elasticsearch configuration, index, query,
+                               destination directory, and other settings.
+
+    Returns:
+        None
+    """
     try:
         src_es = elasticsearch.AsyncElasticsearch(
             hosts=task["src_es_hosts"].split(","),
@@ -84,7 +100,6 @@ async def dump_index_to_jsonl(task):
         max_docs_per_file = task["max_docs_per_file"]
         dst_dir = task["dst_dir"]
 
-        # Get document count
         src_index_count = await src_es.count(
             index=task["src_index"], body=task["query"]
         )
@@ -99,7 +114,7 @@ async def dump_index_to_jsonl(task):
 
         dump_chunk: List[dict] = []
 
-        def save_dump_chunk():
+        def save_dump_chunk() -> None:
             current_file_path = os.path.join(
                 dst_dir, f"{task['src_index']}-{current_file_num}.jsonl"
             )
@@ -135,7 +150,13 @@ async def dump_index_to_jsonl(task):
         await src_es.close()
 
 
-async def main():
+async def main() -> None:
+    """
+    Main function to handle Streamlit UI and execute migration or dump tasks.
+
+    Returns:
+        None
+    """
     st.header("Elasticsearch Settings")
     src_es_hosts = st.text_input(
         "Source Elasticsearch Hosts (comma-separated)", value="http://localhost:9200"
