@@ -1,5 +1,9 @@
 # elastic-imt
-Elastic Indexes Migration Tools
+Elastic Index Migration Tools
+
+
+<img src="/imgs/indexer.jpg?raw=true" alt="Indexer" title="Indexer" width="42%" height="42%"> <img src="/imgs/dumper.jpg?raw=true" alt="JSONL Dumper" title="JSONL Dumper" width="40%" height="40%">
+
 
 ### Install dependencies
 ```
@@ -14,3 +18,4 @@ pip install -r req.txt
 ```
 streamlit run src/app.py
 ```
+Then open Local URL: http://localhost:8501 in browser
