@@ -170,10 +170,11 @@ async def main() -> None:
     Returns:
         None
     """
-    st.header("Elasticsearch Settings")
+    st.header("Elasticsearch Index Migration Tools")
     src_es_hosts = st.text_input(
         "Source Elasticsearch Hosts (comma-separated)", value="http://localhost:9200"
     )
+    src_index = st.text_input("Source Index")
 
     st.header("Migration Tasks")
     tasks = []
@@ -190,7 +191,6 @@ async def main() -> None:
                 "Destination Elasticsearch Hosts (comma-separated)",
                 value="http://localhost:9200",
             )
-            src_index = st.text_input("Source Index")
             dst_index = st.text_input("Destination Index")
             docs_per_request = st.number_input(
                 "Max Docs per request", min_value=1, value=10000
@@ -222,7 +222,6 @@ async def main() -> None:
 
     with mode_tabs[1]:
         with st.form("add_dump_task"):
-            src_index = st.text_input("Source Index")
             docs_per_request = st.number_input(
                 "Max docs per request", min_value=1, value=10000
             )
